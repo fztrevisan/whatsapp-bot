@@ -1,0 +1,31 @@
+[build-system]
+requires = ["setuptools"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+packages = ["scripts", "bot"]
+
+[project]
+name = "whatsapp-bot"
+version = "0.1.0"
+description = "A WhatsApp bot using local LLMs"
+authors = [
+    { name = "Fernando Trevisan" }
+]
+readme = "README.md"
+requires-python = ">=3.13"
+dependencies = [
+    "fastapi==0.115.12",
+    "uvicorn==0.34.2",
+    "httpx==0.28.1",
+    "python-dotenv==1.1.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest==8.3.5",
+]
+
+[project.scripts]
+setup-openwa = "scripts.setup_openwa:main"
+try-extract = "scripts.try_extract:main"
