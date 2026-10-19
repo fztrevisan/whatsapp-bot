@@ -1,0 +1,24 @@
+# Python-generated files
+__pycache__/
+*.py[oc]
+build/
+dist/
+wheels/
+*.egg-info
+
+# Environment files
+.env
+.venv
+env/
+venv/
+ENV/
+env.bak/
+venv.bak/
+
+# OpenWA Framework
+OpenWA/
+qr.png
+
+# macOS
+.DS_Store
+SECURITY_ASSESSMENT.md
