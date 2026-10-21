@@ -1,4 +1,4 @@
-# WhatsApp bot PoC
+# OpenWA keyword bot PoC
 
 A small Python bot that watches **one WhatsApp group** and answers two commands:
 
@@ -74,7 +74,8 @@ OpenWA is an unofficial client, and WhatsApp can restrict or ban numbers it flag
 ## 2. Prerequisites
 
 - macOS with **Docker Desktop**, given at least 2–4 GB of RAM. The default engine runs headless Chromium.
-- **Python 3.10+**
+- **Python 3.13+**
+- **uv** installed (`curl -LsSf https://astral.sh/uv/install.sh | sh`)
 - **git**
 
 ## 3. Run the OpenWA gateway
@@ -126,8 +127,7 @@ docker logs -f openwa-api        # wait for the startup banner, then Ctrl+C
 
 ```bash
 cd ~/workspaces/personal/openwa
-python3 -m venv .venv && source .venv/bin/activate
-pip install -r requirements.txt
+uv sync
 cp .env.example .env
 ```
 
@@ -141,7 +141,7 @@ Leave the other values for now. The next step fills them in.
 Then choose an AI provider. On this Mac, the default `LLM_PROVIDER=auto` picks up your Claude Code login if you have no API key, so it usually needs no changes. Before touching WhatsApp, check that extraction works:
 
 ```bash
-python -m scripts.try_extract "Churrasco do time sábado 13h no Parque Ibirapuera, R\$ 40 por pessoa, levar bebida"
+uv run try-extract "Churrasco do time sábado 13h no Parque Ibirapuera, R\$ 40 por pessoa, levar bebida"
 ```
 
 It prints the provider, the raw JSON from the model, and the reply the bot would send. See [AI providers](#ai-providers) for the other options.
@@ -150,10 +150,10 @@ It prints the provider, the raw JSON from the model, and the reply the bot would
 
 ```bash
 # 1) Create a session. Copy the printed OPENWA_SESSION_ID into .env.
-python -m scripts.setup_openwa create-session poc-bot
+uv run setup-openwa create-session poc-bot
 
 # 2) Start it and get the QR code (saved as qr.png).
-python -m scripts.setup_openwa qr && open qr.png
+uv run setup-openwa qr && open qr.png
 ```
 
 Scan the QR from the **bot's phone**:
@@ -166,10 +166,10 @@ The QR rotates every ~20 s. If it expires, run `qr` again, or use the live QR in
 
 ```bash
 # 3) Check that the session is linked: status should be "ready".
-python -m scripts.setup_openwa status
+uv run setup-openwa status
 
 # 4) Find the group's id. Copy it into .env as WHATSAPP_GROUP_ID (format: 1203630...@g.us).
-python -m scripts.setup_openwa groups
+uv run setup-openwa groups
 ```
 
 Linking survives restarts: the login is kept in `OpenWA/data/sessions`. To unlink, remove the device from the phone's **Linked devices** screen.
@@ -178,12 +178,10 @@ Linking survives restarts: the login is kept in `OpenWA/data/sessions`. To unlin
 
 ```bash
 # Terminal 1: the bot
-source .venv/bin/activate
-uvicorn bot.app:get_app --factory --host 0.0.0.0 --port 8000
+uv run uvicorn bot.app:get_app --factory --host 0.0.0.0 --port 8000
 
 # Terminal 2: tell OpenWA to send this group's messages to the bot
-source .venv/bin/activate
-python -m scripts.setup_openwa webhook
+uv run setup-openwa webhook
 ```
 
 The `webhook` command registers `BOT_WEBHOOK_URL` (default `http://host.docker.internal:8000/webhook`) with:
@@ -249,7 +247,7 @@ OLLAMA_HOST=http://localhost:11434
 You can also try a provider without changing `.env`:
 
 ```bash
-python -m scripts.try_extract --provider ollama --model qwen3:8b "Board games tomorrow 8pm at Ana's"
+uv run try-extract --provider ollama --model qwen3:8b "Board games tomorrow 8pm at Ana's"
 ```
 
 **How each one returns reliable JSON:**
@@ -265,8 +263,8 @@ Whatever the model returns, the bot validates it again. A date that isn't a real
 - **Anthropic API:** ~1–2 s.
 - **Claude CLI:** ~4–10 s, since it starts a process for each event.
 - **Ollama:** depends on the hardware. A 7B model on Apple Silicon takes a few seconds once loaded. Loading it can take much longer, especially on CPU-only PCs. To avoid that load delay, the bot:
-  - loads the model in the background when it starts, and logs `AI model '…' ready (loaded in Ns)`
-  - asks Ollama to keep it in memory for `OLLAMA_KEEP_ALIVE` (default `30m`) after each request
+- loads the model in the background when it starts, and logs `AI model '…' ready (loaded in Ns)`
+- asks Ollama to keep it in memory for `OLLAMA_KEEP_ALIVE` (default `30m`) after each request
 
   Wait for the "ready" log line before testing. Each event also logs `AI extraction took Ns`, so you can size `LLM_TIMEOUT_SECONDS`.
 
@@ -329,30 +327,30 @@ scripts/try_extract.py   test the AI extraction from the terminal
 tests/                   pytest suite (AI providers are faked, no network needed)
 ```
 
-Run the tests with `pytest -q`.
+Run the tests with `uv run pytest -q`.
 
 ## Troubleshooting
 
 - **The `webhook` command fails with `400`, mentioning SSRF.** `SSRF_ALLOWED_HOSTS=host.docker.internal` is missing from `OpenWA/.env`. Add it, then restart: `docker compose -f docker-compose.dev.yml up -d`.
 - **No reply in the group.** Work through these:
-  - Is the session `ready`?
-  - Did the bot terminal log a `POST /webhook`?
-  - A `401` there means the secrets don't match. Re-run `setup_openwa webhook` after changing `WEBHOOK_SECRET`.
-  - Are you sending from the bot's own number? Those messages are ignored by default.
-  - Undelivered webhooks are listed under `GET /api/webhooks/delivery-failures`.
+- Is the session `ready`?
+- Did the bot terminal log a `POST /webhook`?
+- A `401` there means the secrets don't match. Re-run `uv run setup-openwa webhook` after changing `WEBHOOK_SECRET`.
+- Are you sending from the bot's own number? Those messages are ignored by default.
+- Undelivered webhooks are listed under `GET /api/webhooks/delivery-failures`.
 - **Bot replies "Sorry, I couldn't process that event right now".** The AI call failed, and the bot terminal logs why. Common causes:
-  - `Not logged in`: run `claude` once and log in. Check with `claude auth status`.
-  - `ollama pull <model>`: the model isn't downloaded yet.
-  - `Can't reach Ollama`: Ollama isn't running, or `OLLAMA_HOST` is wrong.
-  - `Ollama didn't answer within Ns`: Ollama was reached, but the model was still loading or is too slow for this PC.
-    - Wait for the bot's "model ready" log line.
-    - Raise `LLM_TIMEOUT_SECONDS`.
-    - Use a smaller model.
-    - Set `OLLAMA_KEEP_ALIVE=-1` so the model is never unloaded.
-    - The error says whether the model was in memory. If it was, generation itself was slow: check `OLLAMA_THINK=false`. Each successful call logs `Ollama stats: …` with load time, token counts and thinking length.
-  - A timeout with the Claude CLI: raise `LLM_TIMEOUT_SECONDS`.
+- `Not logged in`: run `claude` once and log in. Check with `claude auth status`.
+- `ollama pull <model>`: the model isn't downloaded yet.
+- `Can't reach Ollama`: Ollama isn't running, or `OLLAMA_HOST` is wrong.
+- `Ollama didn't answer within Ns`: Ollama was reached, but the model was still loading or is too slow for this PC.
+  - Wait for the bot's "model ready" log line.
+  - Raise `LLM_TIMEOUT_SECONDS`.
+  - Use a smaller model.
+  - Set `OLLAMA_KEEP_ALIVE=-1` so the model is never unloaded.
+  - The error says whether the model was in memory. If it was, generation itself was slow: check `OLLAMA_THINK=false`. Each successful call logs `Ollama stats: …` with load time, token counts and thinking length.
+- A timeout with the Claude CLI: raise `LLM_TIMEOUT_SECONDS`.
 
-  Reproduce it with `python -m scripts.try_extract "..."`.
+  Reproduce it with `uv run try-extract "..."`.
 - **A setting isn't what you expect.** `.env` always wins over variables exported in your shell. When it replaces one, the bot prints `[config] .env overrides these variables exported in your shell: …`; run the `unset …` it suggests. A variable that isn't in `.env` at all is still read from the shell. `try_extract` and the bot's startup log show where the AI settings came from: `.env`, `shell`, `unset` or a command-line flag.
 - **Wrong dates, like "saturday" landing on the wrong week.** Set `EVENT_TIMEZONE`. If a small local model keeps misreading dates, try a bigger one (`qwen2.5:14b`) or Claude.
 - **No QR / session stuck.** Look at `docker logs openwa-api`. Chromium needs memory: raise Docker Desktop's RAM, or set `OPENWA_MEM_LIMIT=3g` in `OpenWA/.env`.
