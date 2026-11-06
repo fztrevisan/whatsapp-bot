@@ -7,6 +7,7 @@ Flow per message:
      schedule-event) and send the reply through OpenWA
 
 Message bodies are only held in memory while being processed. Nothing is logged or written to disk.
+Only the extracted event fields are saved to the database.
 For schedule-event, the text after the keyword is sent to the configured AI provider.
 """
 
@@ -19,18 +20,25 @@ import re
 import threading
 import time
 from collections import deque
+from contextlib import AbstractContextManager
 from typing import Any, Callable
 
 from fastapi import BackgroundTasks, FastAPI, Header, HTTPException, Request
+from sqlalchemy import func, select
+from sqlalchemy.orm import Session
 
 from .ai import LLMBackend, get_backend
-from .commands import Command, EventStore, Extractor, execute, parse_command
+from .commands import Command, Extractor, execute, parse_command
 from .config import Settings, env_source
+from .db import session_scope
 from .extraction import extract_event
+from .models import Event
 from .openwa_client import OpenWAClient
 
 log = logging.getLogger("openwa-bot")
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
+
+SessionFactory = Callable[[], AbstractContextManager[Session]]
 
 
 def verify_signature(raw_body: bytes, header: str | None, secret: str) -> bool:
@@ -81,13 +89,13 @@ def _start_warm_up(backend: LLMBackend) -> None:
 
 def create_app(
     settings: Settings | None = None,
-    store: EventStore | None = None,
+    session_factory: SessionFactory | None = None,
     send: Callable[[str, str, str | None], Any] | None = None,
     backend: LLMBackend | None = None,
     extract: Extractor | None = None,
 ) -> FastAPI:
     settings = settings or Settings.from_env()
-    store = store or EventStore()
+    session_factory = session_factory or session_scope
     recent = _RecentKeys()
 
     if send is None:
@@ -114,22 +122,25 @@ def create_app(
         _start_warm_up(backend)
 
     app = FastAPI(title="OpenWA keyword bot", docs_url=None, redoc_url=None)
-    app.state.store = store
+    app.state.session_factory = session_factory
 
     def _run(cmd: Command, author: str, chat_id: str, quoted_id: str | None) -> None:
         # Runs in a worker thread after OpenWA got its 200, so a slow model never times out the webhook.
         try:
-            reply = execute(cmd, author, store, extract, settings.now())
-            send(chat_id, reply, quoted_id)
+            with session_factory() as session:
+                reply = execute(cmd, author, session, extract, settings.now())
+            send(chat_id, reply, quoted_id)  # session is closed before the network call
             log.info("Handled '%s' command, reply sent to %s", cmd.kind, chat_id)
         except Exception as exc:  # never let a failure crash the worker
             log.error("Failed to handle '%s' command: %s", cmd.kind, exc)
 
     @app.get("/health")
     def health() -> dict[str, Any]:
+        with session_factory() as session:
+            total = session.scalar(select(func.count()).select_from(Event)) or 0
         return {
             "ok": True,
-            "events": len(store.all()),
+            "events": total,
             "ai": {"provider": getattr(backend, "name", "custom"), "model": getattr(backend, "model", None)},
         }
 

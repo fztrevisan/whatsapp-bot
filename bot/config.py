@@ -25,6 +25,8 @@ if _SHADOWED:
     )
 load_dotenv(_DOTENV_PATH, override=True)
 
+DEFAULT_DATABASE_URL = "sqlite:///./events.db"
+
 
 def env_source(name: str) -> str:
     """Where a variable's current value came from: '.env', 'shell' or 'unset'."""
@@ -49,6 +51,7 @@ class Settings:
     webhook_secret: str
     reply_to_self: bool
     timezone: str = ""  # IANA name for resolving "tomorrow" etc.; "" = this machine's timezone
+    database_url: str = DEFAULT_DATABASE_URL  # SQLAlchemy URL; swap SQLite for PostgreSQL here
 
     @classmethod
     def from_env(cls) -> "Settings":
@@ -60,6 +63,7 @@ class Settings:
             webhook_secret=os.getenv("WEBHOOK_SECRET", ""),
             reply_to_self=_bool("REPLY_TO_SELF", False),
             timezone=os.getenv("EVENT_TIMEZONE", "").strip(),
+            database_url=os.getenv("DATABASE_URL", "").strip() or DEFAULT_DATABASE_URL,
         )
 
     def now(self) -> datetime:

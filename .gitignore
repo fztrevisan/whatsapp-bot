@@ -15,6 +15,9 @@ ENV/
 env.bak/
 venv.bak/
 
+# Local databases
+*.db
+
 # OpenWA Framework
 OpenWA/
 qr.png
